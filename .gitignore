@@ -21,3 +21,7 @@ htmlcov/
 .vscode/
 .idea/
 .gemini/
+
+.vercel
+smtp_config.json
+backend/smtp_config.json

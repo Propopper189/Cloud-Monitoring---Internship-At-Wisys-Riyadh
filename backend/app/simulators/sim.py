@@ -118,7 +118,7 @@ def generate_random_event(db: Session) -> dict:
         
         adapter = GCPAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         return normalized
 
     elif provider == "Huawei Cloud":
@@ -145,7 +145,7 @@ def generate_random_event(db: Session) -> dict:
         
         adapter = HuaweiCloudAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         return normalized
         
     else: # Microsoft Entra ID
@@ -161,7 +161,7 @@ def generate_random_event(db: Session) -> dict:
         
         adapter = MicrosoftEntraAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         return normalized
 
 def trigger_scenario(db: Session, scenario_name: str) -> list:
@@ -192,7 +192,7 @@ def trigger_scenario(db: Session, scenario_name: str) -> list:
             
         adapter = GCPAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         events_triggered.append(normalized)
         
     elif scenario_name in ("security_group_modified", "security_group_tampering"):
@@ -221,7 +221,7 @@ def trigger_scenario(db: Session, scenario_name: str) -> list:
             
         adapter = HuaweiCloudAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         events_triggered.append(normalized)
         
     elif scenario_name in ("audit_log_disabled", "audit_logging_disabled"):
@@ -249,7 +249,7 @@ def trigger_scenario(db: Session, scenario_name: str) -> list:
             
         adapter = GCPAdapter()
         normalized = adapter.normalize(raw_log)
-        process_normalized_event(db, normalized)
+        process_normalized_event(db, normalized, is_manual_injection=True)
         events_triggered.append(normalized)
         
     return events_triggered

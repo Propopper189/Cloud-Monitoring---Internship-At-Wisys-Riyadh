@@ -23,7 +23,7 @@ CATEGORY_MAP = {
     "ALARM_POLICY_DISABLED": "MONITORING"
 }
 
-def process_normalized_event(db: Session, event_data: dict) -> Event:
+def process_normalized_event(db: Session, event_data: dict, is_manual_injection: bool = False) -> Event:
     event = Event(
         id=str(uuid.uuid4()),
         cloud_provider=event_data["cloud_provider"],
@@ -44,54 +44,73 @@ def process_normalized_event(db: Session, event_data: dict) -> Event:
     db.commit()
     db.refresh(event)
     
+    # 1. Update Resource Inventory State
     update_resource_inventory(db, event)
     
-    # Audit log entry for security audit events
-    if event.event_type in ["SECURITY_GROUP_MODIFIED", "VPC_DELETED", "AUDIT_LOG_DISABLED", "IAM_POLICY_CHANGED", "IAM_ROLE_CHANGED", "ALARM_POLICY_DELETED", "ALARM_POLICY_DISABLED"]:
-        audit = AuditLog(
-            actor=event.actor,
-            source_ip=event.source_ip,
-            action=event.description,
-            resource=event.resource_name,
-            cloud_provider=event.cloud_provider,
-            result="SUCCESS"
-        )
-        db.add(audit)
-        db.commit()
+    # 2. Immutable Audit Log Entry created for event
+    audit = AuditLog(
+        actor=event.actor,
+        source_ip=event.source_ip,
+        action=f"Injected {event.event_type} - {event.description}" if is_manual_injection else f"Event {event.event_type} - {event.description}",
+        resource=event.resource_name,
+        cloud_provider=event.cloud_provider,
+        result="SUCCESS"
+    )
+    db.add(audit)
+    db.commit()
 
+    # 3. Rule Evaluation & Alert Triggering
     rule = db.query(Rule).filter(Rule.event_type == event.event_type).first()
-    if rule and rule.enabled:
+    
+    should_alert = False
+    alert_severity = event.severity
+    rule_id = None
+    rule_desc = event.description
+
+    if rule:
+        if rule.enabled:
+            should_alert = True
+            alert_severity = rule.severity
+            rule_id = rule.id
+            if rule.description:
+                rule_desc = rule.description
+    elif event.severity in ["CRITICAL", "HIGH", "WARNING"]:
+        should_alert = True
+
+    if should_alert and event.event_type not in ["VM_STARTED"]:
         existing_alert = db.query(Alert).filter(
             Alert.resource_id == event.resource_id,
             Alert.event_type == event.event_type,
             Alert.status == "OPEN"
         ).first()
         
+        target_alert = existing_alert
         if not existing_alert:
-            if event.event_type not in ["VM_STARTED"]:
-                alert = Alert(
-                    id="ALT-" + str(uuid.uuid4())[:8].upper(),
-                    timestamp=datetime.utcnow(),
-                    cloud_provider=event.cloud_provider,
-                    category=CATEGORY_MAP.get(event.event_type, "GENERAL"),
-                    event_type=event.event_type,
-                    resource_id=event.resource_id,
-                    resource_name=event.resource_name,
-                    severity=rule.severity,
-                    actor=event.actor,
-                    source_ip=event.source_ip,
-                    description=rule.description or event.description,
-                    status="OPEN",
-                    rule_id=rule.id
-                )
-                db.add(alert)
-                db.commit()
-                db.refresh(alert)
+            alert = Alert(
+                id="ALT-" + str(uuid.uuid4())[:8].upper(),
+                timestamp=datetime.utcnow(),
+                cloud_provider=event.cloud_provider,
+                category=CATEGORY_MAP.get(event.event_type, "SECURITY"),
+                event_type=event.event_type,
+                resource_id=event.resource_id,
+                resource_name=event.resource_name,
+                severity=alert_severity,
+                actor=event.actor,
+                source_ip=event.source_ip,
+                description=rule_desc,
+                status="OPEN",
+                rule_id=rule_id
+            )
+            db.add(alert)
+            db.commit()
+            db.refresh(alert)
+            target_alert = alert
+            
+        # Send Notification Log & Email ONLY when a MANUAL event is injected through the simulation page
+        if is_manual_injection and target_alert and target_alert.severity in ["CRITICAL", "HIGH", "WARNING"]:
+            send_alert_notification(db, target_alert)
                 
-                if alert.severity in ["CRITICAL", "HIGH"]:
-                    send_alert_notification(db, alert)
-                    
-                recalculate_security_score(db)
+        recalculate_security_score(db)
                 
     return event
 

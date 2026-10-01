@@ -16,39 +16,163 @@ from backend.app.services.notification_service import get_smtp_config, save_smtp
 
 router = APIRouter()
 
+REGION_METADATA = {
+    "asia-south1-a": {"display_name": "Asia South 1 (Mumbai)", "lat": 19.0760, "lng": 72.8777, "provider": "GCP"},
+    "asia-east1-b": {"display_name": "Asia East 1 (Taiwan)", "lat": 25.0330, "lng": 121.5654, "provider": "GCP"},
+    "ap-southeast-3": {"display_name": "Asia Southeast 3 (Jakarta)", "lat": -6.2088, "lng": 106.8456, "provider": "Huawei Cloud"},
+    "global": {"display_name": "Global HQ (Riyadh / Entra ID)", "lat": 24.7136, "lng": 46.6753, "provider": "Microsoft Entra ID"},
+    "us-central1": {"display_name": "US Central 1 (Iowa)", "lat": 41.8781, "lng": -87.6298, "provider": "GCP"},
+    "us-east-1": {"display_name": "US East 1 (N. Virginia)", "lat": 38.9072, "lng": -77.0369, "provider": "AWS"},
+    "eu-west-1": {"display_name": "EU West 1 (Ireland)", "lat": 53.3498, "lng": -6.2603, "provider": "Azure"},
+    "cn-north-4": {"display_name": "China North 4 (Beijing)", "lat": 39.9042, "lng": 116.4074, "provider": "Huawei Cloud"}
+}
+
+def compute_instance_map_nodes(db: Session):
+    resources = db.query(Resource).filter(Resource.status != "DELETED").all()
+    active_alerts = db.query(Alert).filter(Alert.status != "RESOLVED").all()
+    
+    alert_lookup = {}
+    for a in active_alerts:
+        if a.severity in ["CRITICAL", "HIGH"]:
+            alert_lookup[a.resource_id] = a.description
+            
+    region_offsets = {}
+    nodes = []
+    
+    for r in resources:
+        base_meta = REGION_METADATA.get(r.region, {"lat": 20.0, "lng": 0.0})
+        reg = r.region
+        
+        # Calculate subtle coordinate jitter offset per resource in region so dots don't overlap
+        idx = region_offsets.get(reg, 0)
+        region_offsets[reg] = idx + 1
+        
+        lat_offset = (idx % 3 - 1) * 1.8
+        lng_offset = (idx // 3) * 2.2
+        
+        has_alert = r.id in alert_lookup
+        is_stopped = r.status in ["STOPPED", "DISABLED", "FAILED", "INACTIVE"]
+        
+        health_status = "UNHEALTHY" if (has_alert or is_stopped) else "HEALTHY"
+        active_desc = alert_lookup.get(r.id) if has_alert else (f"Resource State: {r.status}" if is_stopped else None)
+        
+        nodes.append({
+            "id": r.id,
+            "name": r.name,
+            "cloud_provider": r.cloud_provider,
+            "resource_type": r.resource_type,
+            "region": r.region,
+            "status": r.status,
+            "health": health_status,
+            "latitude": base_meta["lat"] + lat_offset,
+            "longitude": base_meta["lng"] + lng_offset,
+            "active_alert": active_desc
+        })
+        
+    return nodes
+
+def compute_regional_health_data(db: Session):
+    resources = db.query(Resource).filter(Resource.status != "DELETED").all()
+    active_alerts = db.query(Alert).filter(Alert.status != "RESOLVED").all()
+    
+    alert_resource_ids = {a.resource_id: a for a in active_alerts if a.severity in ["CRITICAL", "HIGH"]}
+    
+    regional_buckets = {}
+    for res in resources:
+        reg = res.region
+        if reg not in regional_buckets:
+            regional_buckets[reg] = []
+        regional_buckets[reg].append(res)
+        
+    results = []
+    for reg, res_list in regional_buckets.items():
+        meta = REGION_METADATA.get(reg, {
+            "display_name": f"Region {reg}",
+            "lat": 20.0,
+            "lng": 0.0,
+            "provider": res_list[0].cloud_provider if res_list else "Multi-Cloud"
+        })
+        
+        healthy_count = 0
+        unhealthy_count = 0
+        active_alerts_count = 0
+        resource_summaries = []
+        
+        for r in res_list:
+            has_alert = r.id in alert_resource_ids
+            is_stopped = r.status in ["STOPPED", "DISABLED", "FAILED", "INACTIVE"]
+            
+            if has_alert:
+                active_alerts_count += 1
+                
+            if is_stopped or has_alert:
+                unhealthy_count += 1
+                res_health = "UNHEALTHY"
+            else:
+                healthy_count += 1
+                res_health = "HEALTHY"
+                
+            resource_summaries.append({
+                "id": r.id,
+                "name": r.name,
+                "resource_type": r.resource_type,
+                "status": r.status,
+                "health": res_health,
+                "cloud_provider": r.cloud_provider
+            })
+            
+        region_status = "UNHEALTHY" if unhealthy_count > 0 else "HEALTHY"
+        
+        results.append({
+            "region": reg,
+            "display_name": meta["display_name"],
+            "cloud_provider": meta["provider"],
+            "latitude": meta["lat"],
+            "longitude": meta["lng"],
+            "total_resources": len(res_list),
+            "healthy_count": healthy_count,
+            "unhealthy_count": unhealthy_count,
+            "active_alerts_count": active_alerts_count,
+            "status": region_status,
+            "resources": resource_summaries
+        })
+        
+    return results
+
+@router.get("/resources/map-instances", response_model=List[schemas.InstanceMapNode])
+def get_map_instances(db: Session = Depends(get_db)):
+    return compute_instance_map_nodes(db)
+
+@router.get("/resources/regional-health", response_model=List[schemas.RegionalHealthItem])
+def get_regional_health(db: Session = Depends(get_db)):
+    return compute_regional_health_data(db)
+
 @router.get("/dashboard", response_model=schemas.DashboardStats)
 def get_dashboard_stats(db: Session = Depends(get_db)):
-    # 1. Total resources
     total_resources = db.query(Resource).filter(Resource.status != "DELETED").count()
     total_events = db.query(Event).count()
     total_alerts = db.query(Alert).count()
     
-    # 2. Alert severity counts
     critical_alerts = db.query(Alert).filter(Alert.severity == "CRITICAL", Alert.status != "RESOLVED").count()
     high_alerts = db.query(Alert).filter(Alert.severity == "HIGH", Alert.status != "RESOLVED").count()
     warning_alerts = db.query(Alert).filter(Alert.severity == "WARNING", Alert.status != "RESOLVED").count()
     
-    # 3. Status counts
     open_alerts = db.query(Alert).filter(Alert.status == "OPEN").count()
     ack_alerts = db.query(Alert).filter(Alert.status == "ACKNOWLEDGED").count()
     resolved_alerts = db.query(Alert).filter(Alert.status == "RESOLVED").count()
     
-    # 4. Security score
     security_score = recalculate_security_score(db)
     
-    # 5. GCP Summary
     gcp_resources = db.query(Resource).filter(Resource.cloud_provider == "GCP", Resource.status != "DELETED").count()
     gcp_events = db.query(Event).filter(Event.cloud_provider == "GCP").count()
     gcp_alerts = db.query(Alert).filter(Alert.cloud_provider == "GCP").count()
     gcp_critical = db.query(Alert).filter(Alert.cloud_provider == "GCP", Alert.severity == "CRITICAL", Alert.status != "RESOLVED").count()
     
-    # 6. Huawei Summary
     hw_resources = db.query(Resource).filter(Resource.cloud_provider == "Huawei Cloud", Resource.status != "DELETED").count()
     hw_events = db.query(Event).filter(Event.cloud_provider == "Huawei Cloud").count()
     hw_alerts = db.query(Alert).filter(Alert.cloud_provider == "Huawei Cloud").count()
     hw_critical = db.query(Alert).filter(Alert.cloud_provider == "Huawei Cloud", Alert.severity == "CRITICAL", Alert.status != "RESOLVED").count()
     
-    # Breakdown charts
     severities = ["CRITICAL", "HIGH", "WARNING", "INFO"]
     alerts_by_sev = {sev: db.query(Alert).filter(Alert.severity == sev).count() for sev in severities}
     
@@ -61,6 +185,9 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     
     statuses = ["OPEN", "ACKNOWLEDGED", "RESOLVED"]
     alerts_by_stat = {stat: db.query(Alert).filter(Alert.status == stat).count() for stat in statuses}
+    
+    regional_health = compute_regional_health_data(db)
+    instance_nodes = compute_instance_map_nodes(db)
     
     return {
         "total_resources": total_resources,
@@ -89,7 +216,9 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         "alerts_by_provider": alerts_by_prov,
         "alerts_by_category": alerts_by_cat,
         "alerts_by_status": alerts_by_stat,
-        "events_by_provider": events_by_prov
+        "events_by_provider": events_by_prov,
+        "regional_health": regional_health,
+        "instance_nodes": instance_nodes
     }
 
 @router.get("/resources", response_model=List[schemas.ResourceResponse])
@@ -137,13 +266,11 @@ def get_events(
 
 @router.post("/events", response_model=schemas.EventResponse)
 def create_custom_event(event_req: schemas.EventCreate, db: Session = Depends(get_db)):
-    # Standard normalization interface for custom events
     normalized = event_req.model_dump()
-    # Format raw payload if not existing
     if not normalized.get("raw_payload"):
         normalized["raw_payload"] = json.dumps(normalized, indent=2)
         
-    event = process_normalized_event(db, normalized)
+    event = process_normalized_event(db, normalized, is_manual_injection=True)
     return event
 
 @router.get("/alerts", response_model=List[schemas.AlertResponse])
@@ -179,17 +306,14 @@ def get_alert_detail(id: str, db: Session = Depends(get_db)):
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
         
-    # Get recent events related to this resource
     related_events = db.query(Event).filter(
         Event.resource_id == alert.resource_id
     ).order_by(Event.timestamp.desc()).limit(10).all()
     
-    # Get audit logs related to this resource
     related_audit = db.query(AuditLog).filter(
         AuditLog.resource == alert.resource_name
     ).order_by(AuditLog.timestamp.desc()).limit(10).all()
     
-    # Serializer helpers for audit logs to pass typing
     audit_list = []
     for a in related_audit:
         audit_list.append({
@@ -212,7 +336,6 @@ def get_alert_detail(id: str, db: Session = Depends(get_db)):
 @router.patch("/alerts/{id}/acknowledge", response_model=schemas.AlertResponse)
 def api_acknowledge_alert(id: str, db: Session = Depends(get_db)):
     try:
-        # Simulate operator acknowledging from UI
         alert = acknowledge_alert(db, id, "wisys-operator@wisys.sa", "192.0.2.25")
         return alert
     except ValueError as e:
@@ -221,7 +344,6 @@ def api_acknowledge_alert(id: str, db: Session = Depends(get_db)):
 @router.patch("/alerts/{id}/resolve", response_model=schemas.AlertResponse)
 def api_resolve_alert(id: str, db: Session = Depends(get_db)):
     try:
-        # Simulate operator resolving from UI
         alert = resolve_alert(db, id, "wisys-operator@wisys.sa", "192.0.2.25")
         return alert
     except ValueError as e:
@@ -241,7 +363,6 @@ def update_rule(id: str, rule_update: schemas.RuleUpdate, db: Session = Depends(
     for key, value in update_data.items():
         setattr(rule, key, value)
         
-    # Track policy changes in audit trail
     audit = AuditLog(
         actor="admin-sec@wisys.sa",
         source_ip="192.0.2.25",
@@ -254,9 +375,7 @@ def update_rule(id: str, rule_update: schemas.RuleUpdate, db: Session = Depends(
     db.commit()
     db.refresh(rule)
     
-    # Trigger security score update as policy triggers may have changed
     recalculate_security_score(db)
-    
     return rule
 
 @router.get("/audit-logs", response_model=List[schemas.AuditLogResponse])
@@ -279,6 +398,12 @@ def get_audit_logs(
 def get_notifications(db: Session = Depends(get_db)):
     return db.query(Notification).order_by(Notification.timestamp.desc()).all()
 
+@router.delete("/notifications")
+def clear_notifications(db: Session = Depends(get_db)):
+    count = db.query(Notification).delete()
+    db.commit()
+    return {"status": "SUCCESS", "message": f"Cleared {count} notifications from history"}
+
 @router.get("/security-score", response_model=schemas.SecurityScoreResponse)
 def get_security_score(db: Session = Depends(get_db)):
     score = recalculate_security_score(db)
@@ -298,7 +423,6 @@ def get_security_score(db: Session = Depends(get_db)):
 @router.post("/simulator/random", response_model=schemas.EventResponse)
 def trigger_random_sim_event(db: Session = Depends(get_db)):
     normalized = generate_random_event(db)
-    # Fetch the newly created event from DB
     event = db.query(Event).filter(Event.raw_payload.contains(normalized["resource_id"])).order_by(Event.timestamp.desc()).first()
     return event
 

@@ -97,6 +97,40 @@ export interface SecurityScoreData {
   failed_checks: SecurityCheck[];
 }
 
+export interface RegionalHealthItem {
+  region: string;
+  display_name: string;
+  cloud_provider: string;
+  latitude: number;
+  longitude: number;
+  total_resources: number;
+  healthy_count: number;
+  unhealthy_count: number;
+  active_alerts_count: number;
+  status: "HEALTHY" | "UNHEALTHY";
+  resources: Array<{
+    id: string;
+    name: string;
+    resource_type: string;
+    status: string;
+    health: string;
+    cloud_provider: string;
+  }>;
+}
+
+export interface InstanceMapNode {
+  id: string;
+  name: string;
+  cloud_provider: string;
+  resource_type: string;
+  region: string;
+  status: string;
+  health: "HEALTHY" | "UNHEALTHY";
+  latitude: number;
+  longitude: number;
+  active_alert?: string;
+}
+
 export interface DashboardStats {
   total_resources: number;
   total_events: number;
@@ -125,6 +159,8 @@ export interface DashboardStats {
   alerts_by_category: Record<string, number>;
   alerts_by_status: Record<string, number>;
   events_by_provider: Record<string, number>;
+  regional_health?: RegionalHealthItem[];
+  instance_nodes?: InstanceMapNode[];
 }
 
 export interface AlertDetailResponse {
@@ -132,4 +168,3 @@ export interface AlertDetailResponse {
   related_events: CloudEvent[];
   related_audit_logs: AuditLog[];
 }
-

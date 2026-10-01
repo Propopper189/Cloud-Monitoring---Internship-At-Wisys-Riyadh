@@ -143,6 +143,32 @@ class SecurityScoreResponse(AppBaseModel):
     warning_checks: List[SecurityCheckResponse]
     failed_checks: List[SecurityCheckResponse]
 
+# Regional Deployment & Instance Map Schemas
+class RegionalHealthItem(AppBaseModel):
+    region: str
+    display_name: str
+    cloud_provider: str
+    latitude: float
+    longitude: float
+    total_resources: int
+    healthy_count: int
+    unhealthy_count: int
+    active_alerts_count: int
+    status: str
+    resources: List[Dict[str, Any]]
+
+class InstanceMapNode(AppBaseModel):
+    id: str
+    name: str
+    cloud_provider: str
+    resource_type: str
+    region: str
+    status: str
+    health: str  # "HEALTHY" or "UNHEALTHY"
+    latitude: float
+    longitude: float
+    active_alert: Optional[str] = None
+
 # Dashboard schemas
 class CloudStats(AppBaseModel):
     resources: int
@@ -168,6 +194,8 @@ class DashboardStats(AppBaseModel):
     alerts_by_category: Dict[str, int]
     alerts_by_status: Dict[str, int]
     events_by_provider: Dict[str, int]
+    regional_health: Optional[List[RegionalHealthItem]] = None
+    instance_nodes: Optional[List[InstanceMapNode]] = None
 
 # Simulator requests
 class ScenarioRequest(AppBaseModel):

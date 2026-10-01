@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Mail, Settings } from "lucide-react";
+import { Mail, Settings, Trash2 } from "lucide-react";
 import type { Notification } from "../types";
-import { fetchSMTPConfig, saveSMTPConfig } from "../services/api";
+import { fetchSMTPConfig, saveSMTPConfig, clearNotifications } from "../services/api";
 
 interface NotificationsProps {
   notifications: Notification[];
@@ -146,10 +146,24 @@ export default function Notifications({ notifications }: NotificationsProps) {
       </div>
 
       <div className="card">
-        <div className="panel-header">
+        <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 className="panel-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <Mail size={16} className="text-info" /> Outbound SMTP Dispatch Log
           </h3>
+          {notifications.length > 0 && (
+            <button 
+              className="btn btn-secondary" 
+              style={{ padding: "4px 10px", fontSize: "12px", color: "var(--severity-critical)", borderColor: "var(--severity-critical)", display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={async () => {
+                if (confirm("Are you sure you want to clear all notification history?")) {
+                  await clearNotifications();
+                  window.location.reload();
+                }
+              }}
+            >
+              <Trash2 size={13} /> Clear History
+            </button>
+          )}
         </div>
 
         <div className="table-container">

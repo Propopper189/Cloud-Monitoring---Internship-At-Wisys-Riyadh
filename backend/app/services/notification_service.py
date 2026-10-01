@@ -93,9 +93,14 @@ def send_alert_notification(db: Session, alert: Alert):
     # Check if configurations are provided
     if server_addr and username and password and recipient:
         try:
+            # Determine valid sender email address (Brevo relay IDs like b5f116001@smtp-brevo.com are login IDs, not valid sender addresses)
+            from_email = username
+            if not from_email or "@smtp-brevo.com" in from_email or "@sendinblue.com" in from_email:
+                from_email = recipient
+
             # Construct the email mime structure
             msg = MIMEMultipart()
-            msg["From"] = recipient
+            msg["From"] = f"WiSys Cloud Alerts <{from_email}>"
             msg["To"] = recipient
             msg["Subject"] = subject
             
@@ -106,12 +111,13 @@ def send_alert_notification(db: Session, alert: Alert):
             server.starttls()
             server.login(username, password)
             
-            # Dispatch
-            server.sendmail(recipient, recipient, msg.as_string())
+            # Dispatch using valid sender address
+            server.sendmail(from_email, recipient, msg.as_string())
             server.quit()
             
-            # Update status in local dashboard database
+            # Update status and real recipient in local dashboard database
             notification.status = "DISPATCHED_REAL_EMAIL"
+            notification.recipient = recipient
             db.commit()
             print(f"SUCCESS: Real alert email dispatched to {recipient}")
         except Exception as e:
