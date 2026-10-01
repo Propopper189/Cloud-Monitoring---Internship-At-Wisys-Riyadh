@@ -1,0 +1,7 @@
+{
+    "smtp_server": "smtp-relay.brevo.com",
+    "smtp_port": 587,
+    "smtp_username": "b5f116001@smtp-brevo.com",
+    "smtp_password": "bskqr8EnHFw50j3",
+    "alert_recipient": "jawaidaquib893@gmail.com"
+}

@@ -1,0 +1,23 @@
+# Node dependencies
+node_modules/
+dist/
+.env
+
+# Python compilation and testing caches
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases (exclude local development databases)
+*.db
+
+# System and editor configurations
+.DS_Store
+.vscode/
+.idea/
+.gemini/
